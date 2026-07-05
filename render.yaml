@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: email-verifier
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/status
+    envVars:
+      - key: PORT
+        value: 8080

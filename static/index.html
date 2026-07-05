@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EMAIL VERIFIER :: BULK ACCESS GRID</title>
+  <meta name="description" content="Hacking-style bulk email validator with live verification results." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #020605;
+      --panel: rgba(4, 22, 10, 0.94);
+      --panel-strong: rgba(7, 31, 14, 0.98);
+      --line: rgba(0, 255, 102, 0.2);
+      --text: #7dff9b;
+      --muted: #4a7f53;
+      --danger: #ff4b4b;
+      --warning: #ffd166;
+      --accent: #00ff66;
+      --shadow: 0 0 24px rgba(0, 255, 102, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: 'Share Tech Mono', monospace;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(0,255,102,0.08), transparent 28%),
+        linear-gradient(135deg, #010402 0%, #020605 45%, #03120a 100%);
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: linear-gradient(rgba(0,255,102,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,102,0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      opacity: 0.18;
+      pointer-events: none;
+      animation: drift 8s linear infinite;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.22) 100%);
+      pointer-events: none;
+    }
+
+    .scanlines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 1px, transparent 2px, transparent 4px);
+      mix-blend-mode: soft-light;
+      opacity: 0.18;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      margin-bottom: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-size: 0.95rem;
+    }
+
+    .blink {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      animation: pulse 1.4s infinite;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(0,255,102,0.22);
+      color: var(--muted);
+      background: rgba(0,255,102,0.04);
+    }
+
+    .status-pill.online { color: var(--text); }
+
+    .status-pill .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .status-pill.online .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+    .hero-panel {
+      display: grid;
+      grid-template-columns: 1.25fr 0.9fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-body { padding: 20px; }
+
+    .eyebrow {
+      color: var(--muted);
+      letter-spacing: 0.28em;
+      margin: 0 0 8px 0;
+      text-transform: uppercase;
+      font-size: 0.8rem;
+    }
+
+    h1, h2 { margin: 0; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+
+    .hero-copy p { color: #b9fbc7; line-height: 1.7; }
+
+    .command-row {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border: 1px solid rgba(0,255,102,0.18);
+      background: rgba(0,255,102,0.05);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .command-row span { color: var(--muted); white-space: nowrap; }
+
+    .email-input {
+      flex: 1;
+      min-width: 220px;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      outline: none;
+      font: inherit;
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid rgba(0,255,102,0.3);
+      background: rgba(0,255,102,0.08);
+      color: var(--text);
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 0 12px rgba(0,255,102,0.16); }
+    .btn.secondary { color: var(--warning); border-color: rgba(255,209,102,0.25); background: rgba(255,209,102,0.08); }
+    .btn:disabled { opacity: 0.6; cursor: wait; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .stat {
+      padding: 10px;
+      border: 1px solid rgba(0,255,102,0.16);
+      background: rgba(0,255,102,0.04);
+    }
+
+    .stat strong { display: block; font-size: 1.1rem; color: var(--accent); }
+    .stat span { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
+
+    .console-panel .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(0,255,102,0.05);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+    }
+
+    .console-output {
+      margin: 0;
+      padding: 16px;
+      min-height: 260px;
+      white-space: pre-wrap;
+      line-height: 1.7;
+      color: #bff7c7;
+      font-size: 0.95rem;
+    }
+
+    .results-panel { margin-top: 10px; }
+    .results-panel .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(0,255,102,0.05);
+    }
+
+    .results-list {
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .result-card {
+      padding: 12px 14px;
+      border: 1px solid rgba(0,255,102,0.16);
+      background: rgba(0,255,102,0.04);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .result-card:hover { transform: translateY(-1px); border-color: rgba(0,255,102,0.28); }
+    .result-card.valid { border-color: rgba(0,255,102,0.3); }
+    .result-card.invalid { border-color: rgba(255,75,75,0.28); }
+    .result-card.unknown { border-color: rgba(255,209,102,0.28); }
+
+    .result-meta { min-width: 0; }
+    .result-email { color: var(--accent); word-break: break-all; }
+    .result-status { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.12em; }
+    .result-status.valid { color: var(--accent); }
+    .result-status.invalid { color: var(--danger); }
+    .result-status.unknown { color: var(--warning); }
+
+    .result-score { color: var(--muted); white-space: nowrap; }
+
+    .empty-state {
+      color: var(--muted);
+      text-align: center;
+      padding: 24px 12px;
+      border: 1px dashed rgba(0,255,102,0.16);
+      background: rgba(0,255,102,0.03);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.7; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+    @keyframes drift {
+      from { transform: translateY(0); }
+      to { transform: translateY(-16px); }
+    }
+
+    @media (max-width: 900px) {
+      .hero-panel { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+    }
+
+    @media (max-width: 600px) {
+      .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
+      .stats { grid-template-columns: 1fr; }
+      .result-card { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="scanlines"></div>
+  <main class="container">
+    <header class="topbar">
+      <div class="brand"><span class="blink"></span> Email Verifier // Bulk Access Grid</div>
+      <div id="service-status" class="status-pill"><span class="dot"></span> Booting signal</div>
+    </header>
+
+    <section class="hero-panel">
+      <div class="panel">
+        <div class="panel-body">
+          <p class="eyebrow">[ Internal / beta / live scan ]</p>
+          <h1>Bulk Email Verification</h1>
+          <p>Deploy a covert sweep across targets. Green confirms a clean vector; red flags a compromised or invalid address.</p>
+
+          <label class="command-row" for="email-input">
+            <span>root@verifier:~$</span>
+            <textarea id="email-input" class="email-input" spellcheck="false">neo@matrix.dev
+morpheus@example.com
+trinity@thecity.io
+agent-smith@evil.com
+</textarea>
+          </label>
+
+          <div class="control-row">
+            <button id="run-scan" class="btn">Run Scan</button>
+            <button id="clear-input" class="btn secondary">Clear Queue</button>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><strong id="total-count">0</strong><span>Targets</span></div>
+            <div class="stat"><strong id="valid-count">0</strong><span>Valid</span></div>
+            <div class="stat"><strong id="invalid-count">0</strong><span>Invalid</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel console-panel">
+        <div class="panel-header">[ system log ]</div>
+        <pre id="console-output" class="console-output">INITIALIZING...
+&gt; awaiting target queue...
+&gt; press RUN SCAN to begin.
+</pre>
+      </div>
+    </section>
+
+    <section class="panel results-panel">
+      <div class="panel-header">
+        <h2>Results Matrix</h2>
+        <span id="results-summary">0 / 0 scanned</span>
+      </div>
+      <div id="results-list" class="results-list">
+        <div class="empty-state">No scan has been executed yet.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const emailInput = document.getElementById('email-input');
+    const runScanButton = document.getElementById('run-scan');
+    const clearButton = document.getElementById('clear-input');
+    const consoleOutput = document.getElementById('console-output');
+    const resultsList = document.getElementById('results-list');
+    const totalCount = document.getElementById('total-count');
+    const validCount = document.getElementById('valid-count');
+    const invalidCount = document.getElementById('invalid-count');
+    const resultsSummary = document.getElementById('results-summary');
+    const serviceStatus = document.getElementById('service-status');
+
+    function logLine(message) {
+      consoleOutput.textContent += `\n${message}`;
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    function parseEmails(value) {
+      return value
+        .split(/\r?\n|,|;/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+
+    function statusClass(result) {
+      if (result.status === 'VALID' || result.status === 'PROBABLY_VALID') return 'valid';
+      if (result.status === 'INVALID' || result.status === 'INVALID_FORMAT' || result.status === 'INVALID_DOMAIN' || result.status === 'NO_MX_RECORDS' || result.status === 'DISPOSABLE') return 'invalid';
+      return 'unknown';
+    }
+
+    function statusLabel(result) {
+      return (result.status || 'UNKNOWN').replace(/_/g, ' ');
+    }
+
+    async function checkServiceStatus() {
+      try {
+        const response = await fetch('/api/status');
+        if (response.ok) {
+          const data = await response.json();
+          serviceStatus.innerHTML = '<span class="dot"></span> ' + (data.status || 'online');
+          serviceStatus.classList.add('online');
+          logLine(`> service online :: ${data.status || 'ready'}`);
+        }
+      } catch (error) {
+        serviceStatus.innerHTML = '<span class="dot"></span> offline';
+        logLine('> service offline :: using local fallback');
+      }
+    }
+
+    function renderResults(results) {
+      if (!results.length) {
+        resultsList.innerHTML = '<div class="empty-state">No valid targets returned.</div>';
+        return;
+      }
+
+      resultsList.innerHTML = results.map((result) => `
+        <article class="result-card ${statusClass(result)}">
+          <div class="result-meta">
+            <div class="result-email">${result.email}</div>
+            <div class="result-status ${statusClass(result)}">${statusLabel(result)}</div>
+          </div>
+          <div class="result-score">score: ${result.score}</div>
+        </article>
+      `).join('');
+    }
+
+    function updateCounters(results) {
+      const total = results.length;
+      const valid = results.filter((result) => result.status === 'VALID' || result.status === 'PROBABLY_VALID').length;
+      const invalid = total - valid;
+      totalCount.textContent = total;
+      validCount.textContent = valid;
+      invalidCount.textContent = invalid;
+      resultsSummary.textContent = `${results.length} / ${results.length} scanned`;
+    }
+
+    async function runScan() {
+      const emails = parseEmails(emailInput.value);
+      if (!emails.length) {
+        logLine('> queue empty :: add targets first');
+        return;
+      }
+
+      runScanButton.disabled = true;
+      logLine(`> launching sweep against ${emails.length} targets...`);
+      resultsList.innerHTML = '<div class="empty-state">Scanning...</div>';
+
+      try {
+        const response = await fetch('/api/validate/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails })
+        });
+
+        const data = await response.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        renderResults(results);
+        updateCounters(results);
+        logLine(`> scan complete :: ${results.length} records parsed`);
+      } catch (error) {
+        logLine(`> transmission failed :: ${error.message}`);
+        resultsList.innerHTML = '<div class="empty-state">Scan failed. Check the backend service.</div>';
+      } finally {
+        runScanButton.disabled = false;
+      }
+    }
+
+    runScanButton.addEventListener('click', runScan);
+    clearButton.addEventListener('click', () => {
+      emailInput.value = '';
+      resultsList.innerHTML = '<div class="empty-state">Queue cleared.</div>';
+      totalCount.textContent = '0';
+      validCount.textContent = '0';
+      invalidCount.textContent = '0';
+      resultsSummary.textContent = '0 / 0 scanned';
+      logLine('> queue cleared');
+    });
+
+    checkServiceStatus();
+  </script>
+</body>
+</html>
