@@ -201,7 +201,19 @@
 
     .btn:hover { transform: translateY(-1px); box-shadow: 0 0 12px rgba(0,255,102,0.16); }
     .btn.secondary { color: var(--warning); border-color: rgba(255,209,102,0.25); background: rgba(255,209,102,0.08); }
+    .btn.download { color: var(--accent); border-color: rgba(0,255,102,0.35); background: rgba(0,255,102,0.12); }
     .btn:disabled { opacity: 0.6; cursor: wait; }
+
+    .file-input {
+      display: none;
+    }
+
+    .upload-hint {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+    }
 
     .stats {
       display: grid;
@@ -243,9 +255,18 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
       padding: 12px 16px;
       border-bottom: 1px solid var(--line);
       background: rgba(0,255,102,0.05);
+    }
+
+    .results-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
     }
 
     .results-list {
@@ -322,18 +343,18 @@
         <div class="panel-body">
           <p class="eyebrow">[ Internal / beta / live scan ]</p>
           <h1>Bulk Email Verification</h1>
-          <p>Deploy a covert sweep across targets. Green confirms a clean vector; red flags a compromised or invalid address.</p>
+          <p>Paste emails below or upload a .txt file. After scanning, download verified addresses as a .txt file.</p>
 
           <label class="command-row" for="email-input">
             <span>root@verifier:~$</span>
-            <textarea id="email-input" class="email-input" spellcheck="false">neo@matrix.dev
-morpheus@example.com
-trinity@thecity.io
-agent-smith@evil.com
-</textarea>
+            <textarea id="email-input" class="email-input" spellcheck="false" placeholder="one email per line&#10;or upload a .txt file"></textarea>
           </label>
 
+          <input id="file-input" class="file-input" type="file" accept=".txt,text/plain" />
+          <p id="upload-hint" class="upload-hint">Supports .txt files with one email per line (commas and semicolons also work).</p>
+
           <div class="control-row">
+            <button id="upload-file" class="btn secondary" type="button">Upload .txt</button>
             <button id="run-scan" class="btn">Run Scan</button>
             <button id="clear-input" class="btn secondary">Clear Queue</button>
           </div>
@@ -358,7 +379,11 @@ agent-smith@evil.com
     <section class="panel results-panel">
       <div class="panel-header">
         <h2>Results Matrix</h2>
-        <span id="results-summary">0 / 0 scanned</span>
+        <div class="results-actions">
+          <span id="results-summary">0 / 0 scanned</span>
+          <button id="download-verified" class="btn download" type="button" disabled>Download Verified (.txt)</button>
+          <button id="download-all" class="btn download" type="button" disabled>Download All Results (.txt)</button>
+        </div>
       </div>
       <div id="results-list" class="results-list">
         <div class="empty-state">No scan has been executed yet.</div>
@@ -368,8 +393,13 @@ agent-smith@evil.com
 
   <script>
     const emailInput = document.getElementById('email-input');
+    const fileInput = document.getElementById('file-input');
+    const uploadFileButton = document.getElementById('upload-file');
     const runScanButton = document.getElementById('run-scan');
     const clearButton = document.getElementById('clear-input');
+    const downloadVerifiedButton = document.getElementById('download-verified');
+    const downloadAllButton = document.getElementById('download-all');
+    const uploadHint = document.getElementById('upload-hint');
     const consoleOutput = document.getElementById('console-output');
     const resultsList = document.getElementById('results-list');
     const totalCount = document.getElementById('total-count');
@@ -378,9 +408,44 @@ agent-smith@evil.com
     const resultsSummary = document.getElementById('results-summary');
     const serviceStatus = document.getElementById('service-status');
 
+    let lastResults = [];
+
     function logLine(message) {
       consoleOutput.textContent += `\n${message}`;
       consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function isVerified(result) {
+      return result.status === 'VALID' || result.status === 'PROBABLY_VALID';
+    }
+
+    function updateDownloadButtons(results) {
+      const verifiedCount = results.filter(isVerified).length;
+      downloadVerifiedButton.disabled = verifiedCount === 0;
+      downloadAllButton.disabled = results.length === 0;
+    }
+
+    function downloadTextFile(filename, content) {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function timestampLabel() {
+      return new Date().toISOString().replace(/[:.]/g, '-');
     }
 
     function parseEmails(value) {
@@ -424,32 +489,79 @@ agent-smith@evil.com
       resultsList.innerHTML = results.map((result) => `
         <article class="result-card ${statusClass(result)}">
           <div class="result-meta">
-            <div class="result-email">${result.email}</div>
-            <div class="result-status ${statusClass(result)}">${statusLabel(result)}</div>
+            <div class="result-email">${escapeHtml(result.email)}</div>
+            <div class="result-status ${statusClass(result)}">${escapeHtml(statusLabel(result))}</div>
           </div>
-          <div class="result-score">score: ${result.score}</div>
+          <div class="result-score">score: ${escapeHtml(result.score ?? '')}</div>
         </article>
       `).join('');
     }
 
+    function mergeEmailsIntoInput(emails) {
+      const existing = parseEmails(emailInput.value);
+      const merged = [...new Set([...existing, ...emails])];
+      emailInput.value = merged.join('\n');
+      totalCount.textContent = merged.length;
+      return merged.length;
+    }
+
+    function handleFileUpload(file) {
+      if (!file) return;
+
+      const isTextFile = file.name.toLowerCase().endsWith('.txt') || file.type === 'text/plain' || file.type === '';
+      if (!isTextFile) {
+        logLine('> upload rejected :: only .txt files are supported');
+        uploadHint.textContent = 'Upload failed: please choose a .txt file.';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const emails = parseEmails(String(reader.result || ''));
+        if (!emails.length) {
+          logLine(`> upload failed :: no emails found in ${file.name}`);
+          uploadHint.textContent = `No emails found in ${file.name}.`;
+          return;
+        }
+
+        const total = mergeEmailsIntoInput(emails);
+        uploadHint.textContent = `Loaded ${emails.length} email(s) from ${file.name}. Queue total: ${total}.`;
+        logLine(`> upload complete :: ${emails.length} targets imported from ${file.name}`);
+      };
+      reader.onerror = () => {
+        logLine(`> upload failed :: could not read ${file.name}`);
+        uploadHint.textContent = `Could not read ${file.name}.`;
+      };
+      reader.readAsText(file);
+    }
+
     function updateCounters(results) {
       const total = results.length;
-      const valid = results.filter((result) => result.status === 'VALID' || result.status === 'PROBABLY_VALID').length;
+      const valid = results.filter(isVerified).length;
       const invalid = total - valid;
       totalCount.textContent = total;
       validCount.textContent = valid;
       invalidCount.textContent = invalid;
       resultsSummary.textContent = `${results.length} / ${results.length} scanned`;
+      updateDownloadButtons(results);
     }
 
     async function runScan() {
       const emails = parseEmails(emailInput.value);
       if (!emails.length) {
-        logLine('> queue empty :: add targets first');
+        logLine('> queue empty :: paste emails or upload a .txt file first');
+        return;
+      }
+
+      if (emails.length > 100) {
+        logLine(`> queue too large :: maximum 100 emails per scan (${emails.length} provided)`);
+        uploadHint.textContent = 'Maximum 100 emails per scan. Remove extras and try again.';
         return;
       }
 
       runScanButton.disabled = true;
+      downloadVerifiedButton.disabled = true;
+      downloadAllButton.disabled = true;
       logLine(`> launching sweep against ${emails.length} targets...`);
       resultsList.innerHTML = '<div class="empty-state">Scanning...</div>';
 
@@ -462,25 +574,60 @@ agent-smith@evil.com
 
         const data = await response.json();
         const results = Array.isArray(data.results) ? data.results : [];
+        lastResults = results;
         renderResults(results);
         updateCounters(results);
-        logLine(`> scan complete :: ${results.length} records parsed`);
+        const verified = results.filter(isVerified).length;
+        logLine(`> scan complete :: ${results.length} records parsed :: ${verified} verified`);
       } catch (error) {
+        lastResults = [];
         logLine(`> transmission failed :: ${error.message}`);
         resultsList.innerHTML = '<div class="empty-state">Scan failed. Check the backend service.</div>';
+        updateDownloadButtons([]);
       } finally {
         runScanButton.disabled = false;
       }
     }
 
+    uploadFileButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      handleFileUpload(file);
+      fileInput.value = '';
+    });
+
+    downloadVerifiedButton.addEventListener('click', () => {
+      const verifiedEmails = lastResults.filter(isVerified).map((result) => result.email);
+      if (!verifiedEmails.length) {
+        logLine('> download blocked :: no verified emails available');
+        return;
+      }
+      downloadTextFile(`verified-emails-${timestampLabel()}.txt`, verifiedEmails.join('\n') + '\n');
+      logLine(`> download started :: ${verifiedEmails.length} verified email(s)`);
+    });
+
+    downloadAllButton.addEventListener('click', () => {
+      if (!lastResults.length) {
+        logLine('> download blocked :: no scan results available');
+        return;
+      }
+      const lines = lastResults.map((result) => `${result.email}\t${result.status}\t${result.score ?? ''}`);
+      downloadTextFile(`email-scan-results-${timestampLabel()}.txt`, lines.join('\n') + '\n');
+      logLine(`> download started :: full results export (${lastResults.length} records)`);
+    });
+
     runScanButton.addEventListener('click', runScan);
     clearButton.addEventListener('click', () => {
       emailInput.value = '';
+      lastResults = [];
+      fileInput.value = '';
       resultsList.innerHTML = '<div class="empty-state">Queue cleared.</div>';
       totalCount.textContent = '0';
       validCount.textContent = '0';
       invalidCount.textContent = '0';
       resultsSummary.textContent = '0 / 0 scanned';
+      uploadHint.textContent = 'Supports .txt files with one email per line (commas and semicolons also work).';
+      updateDownloadButtons([]);
       logLine('> queue cleared');
     });
 
