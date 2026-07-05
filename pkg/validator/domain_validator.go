@@ -20,52 +20,55 @@ func NewDomainValidator(resolver DNSResolver, cacheManager *DomainCacheManager) 
 	}
 }
 
-// Validate checks if the domain exists
-func (v *DomainValidator) Validate(domain string) bool {
-	// Check cache first
-	if exists, found := v.cacheManager.Get(domain); found {
-		monitoring.RecordCacheOperation("domain_lookup", "hit")
-		return exists
+// ValidateDomainRecords checks MX records first, then falls back to host lookup per RFC 5321.
+// Results are cached together to avoid duplicate DNS queries during batch validation.
+func (v *DomainValidator) ValidateDomainRecords(domain string) (exists bool, hasMX bool) {
+	if exists, hasMX, found := v.cacheManager.GetValidation(domain); found {
+		monitoring.RecordCacheOperation("domain_validation", "hit")
+		return exists, hasMX
 	}
-	monitoring.RecordCacheOperation("domain_lookup", "miss")
+	monitoring.RecordCacheOperation("domain_validation", "miss")
 
-	// Perform lookup
+	hasMX = v.lookupMX(domain)
+	if hasMX {
+		v.cacheManager.SetValidation(domain, true, true)
+		return true, true
+	}
+
 	start := time.Now()
 	_, err := v.resolver.LookupHost(domain)
 	monitoring.RecordDNSLookup("host", time.Since(start))
-	exists := err == nil
+	exists = err == nil
 
-	// Update cache
-	v.cacheManager.Set(domain, exists)
+	v.cacheManager.SetValidation(domain, exists, false)
+	return exists, false
+}
 
-	// Periodically clean up expired cache entries
-	go v.cacheManager.ClearExpired()
-
+// Validate checks if the domain exists
+func (v *DomainValidator) Validate(domain string) bool {
+	exists, _ := v.ValidateDomainRecords(domain)
 	return exists
 }
 
 // ValidateMX checks if the domain has valid MX records
 func (v *DomainValidator) ValidateMX(domain string) bool {
+	_, hasMX := v.ValidateDomainRecords(domain)
+	return hasMX
+}
+
+func (v *DomainValidator) lookupMX(domain string) bool {
 	start := time.Now()
 	mxRecords, err := v.resolver.LookupMX(domain)
 	monitoring.RecordDNSLookup("mx", time.Since(start))
 
-	// If there's an error in lookup, the domain doesn't have valid MX records
-	if err != nil {
+	if err != nil || len(mxRecords) == 0 {
 		return false
 	}
 
-	// No MX records means the domain doesn't accept email
-	if len(mxRecords) == 0 {
-		return false
-	}
-
-	// Check for null MX record (RFC 7505)
-	// A single MX record with "." as the host indicates the domain doesn't accept email
+	// Null MX record (RFC 7505)
 	if len(mxRecords) == 1 && mxRecords[0].Host == "." {
 		return false
 	}
 
-	// Otherwise, the domain has valid MX records
 	return true
 }

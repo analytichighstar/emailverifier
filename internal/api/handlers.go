@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+const maxBatchEmails = 100
 
 var (
 	// concurrentBatchRequests tracks the number of batch requests being processed concurrently
@@ -123,6 +126,11 @@ func (h *Handler) HandleBatchValidate(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	if len(req.Emails) > maxBatchEmails {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Maximum %d emails allowed per batch request", maxBatchEmails))
 		return
 	}
 

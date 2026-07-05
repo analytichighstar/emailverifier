@@ -100,6 +100,11 @@ func (v *EmailValidator) ValidateDomain(domain string) bool {
 	return v.domainValidator.Validate(domain)
 }
 
+// ValidateDomainRecords checks domain existence and MX records with shared caching.
+func (v *EmailValidator) ValidateDomainRecords(domain string) (bool, bool) {
+	return v.domainValidator.ValidateDomainRecords(domain)
+}
+
 // ValidateMXRecords checks if the domain has valid MX records
 func (v *EmailValidator) ValidateMXRecords(domain string) bool {
 	return v.domainValidator.ValidateMX(domain)

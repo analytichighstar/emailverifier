@@ -49,6 +49,11 @@ func (m *MockEmailValidator) ValidateDomain(domain string) bool {
 	return m.MockDomainValidator.ValidateDomain(domain)
 }
 
+// ValidateDomainRecords implements the validator.EmailValidator interface
+func (m *MockEmailValidator) ValidateDomainRecords(domain string) (bool, bool) {
+	return m.MockDomainValidator.ValidateDomainRecords(domain)
+}
+
 // ValidateMXRecords implements the validator.EmailValidator interface
 func (m *MockEmailValidator) ValidateMXRecords(domain string) bool {
 	return m.MockDomainValidator.ValidateMXRecords(domain)

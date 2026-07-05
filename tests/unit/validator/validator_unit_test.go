@@ -430,10 +430,11 @@ func TestCacheExpiration(t *testing.T) {
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 	mockResolver := NewMockResolver()
+	mockResolver.validDomains["cache-test.com"] = true
 	validator.SetResolver(mockResolver)
 	validator.SetCacheDuration(time.Millisecond * 50)
 
-	domain := "example.com"
+	domain := "cache-test.com"
 
 	exists := validator.ValidateDomain(domain)
 	if !exists {

@@ -47,6 +47,11 @@ func (m *MockDomainValidator) ValidateDomain(domain string) bool {
 	return args.Bool(0)
 }
 
+func (m *MockDomainValidator) ValidateDomainRecords(domain string) (bool, bool) {
+	args := m.Called(domain)
+	return args.Bool(0), args.Bool(1)
+}
+
 func (m *MockDomainValidator) ValidateMXRecords(domain string) bool {
 	args := m.Called(domain)
 	return args.Bool(0)

@@ -27,8 +27,7 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "example.com",
 			timeout: 5 * time.Second,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "example.com").Return(true)
-				mv.On("ValidateMXRecords", "example.com").Return(true)
+				mv.On("ValidateDomainRecords", "example.com").Return(true, true)
 				mv.On("IsDisposable", "example.com").Return(false)
 			},
 			expectedExists:  true,
@@ -40,8 +39,7 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "nonexistent.com",
 			timeout: 5 * time.Second,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "nonexistent.com").Return(false)
-				mv.On("ValidateMXRecords", "nonexistent.com").Return(false)
+				mv.On("ValidateDomainRecords", "nonexistent.com").Return(false, false)
 				mv.On("IsDisposable", "nonexistent.com").Return(false)
 			},
 			expectedExists:  false,
@@ -53,8 +51,7 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "temp.com",
 			timeout: 5 * time.Second,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "temp.com").Return(true)
-				mv.On("ValidateMXRecords", "temp.com").Return(true)
+				mv.On("ValidateDomainRecords", "temp.com").Return(true, true)
 				mv.On("IsDisposable", "temp.com").Return(true)
 			},
 			expectedExists:  true,
@@ -66,8 +63,7 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "slow.com",
 			timeout: 1 * time.Millisecond,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "slow.com").After(10 * time.Millisecond).Return(true)
-				mv.On("ValidateMXRecords", "slow.com").After(10 * time.Millisecond).Return(true)
+				mv.On("ValidateDomainRecords", "slow.com").After(10 * time.Millisecond).Return(true, true)
 				mv.On("IsDisposable", "slow.com").After(10 * time.Millisecond).Return(false)
 			},
 			expectedExists:  false,
@@ -79,11 +75,10 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "mx-only.com",
 			timeout: 5 * time.Second,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "mx-only.com").Return(false)   // No A record
-				mv.On("ValidateMXRecords", "mx-only.com").Return(true) // Has MX
+				mv.On("ValidateDomainRecords", "mx-only.com").Return(true, true)
 				mv.On("IsDisposable", "mx-only.com").Return(false)
 			},
-			expectedExists:  true, // Should be true because MX exists
+			expectedExists:  true,
 			expectedHasMX:   true,
 			expectedDispose: false,
 		},
@@ -92,11 +87,10 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 			domain:  "a-only.com",
 			timeout: 5 * time.Second,
 			setup: func(mv *mocks.MockDomainValidator) {
-				mv.On("ValidateDomain", "a-only.com").Return(true)     // Has A record
-				mv.On("ValidateMXRecords", "a-only.com").Return(false) // No MX
+				mv.On("ValidateDomainRecords", "a-only.com").Return(true, false)
 				mv.On("IsDisposable", "a-only.com").Return(false)
 			},
-			expectedExists:  true, // Should be true because A record exists (fallback)
+			expectedExists:  true,
 			expectedHasMX:   false,
 			expectedDispose: false,
 		},
@@ -104,26 +98,20 @@ func TestConcurrentDomainValidationService_ValidateDomainConcurrently(t *testing
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock
 			mockValidator := new(mocks.MockDomainValidator)
 			tt.setup(mockValidator)
 
-			// Create service
 			svc := service.NewConcurrentDomainValidationService(mockValidator)
 
-			// Create context with timeout
 			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
 			defer cancel()
 
-			// Execute
 			exists, hasMX, isDisposable := svc.ValidateDomainConcurrently(ctx, tt.domain)
 
-			// Assert
 			assert.Equal(t, tt.expectedExists, exists)
 			assert.Equal(t, tt.expectedHasMX, hasMX)
 			assert.Equal(t, tt.expectedDispose, isDisposable)
 
-			// Verify mock expectations
 			mockValidator.AssertExpectations(t)
 		})
 	}

@@ -23,6 +23,7 @@ type EmailService struct {
 	metricsCollector    MetricsCollector
 	startTime           time.Time
 	requests            int64
+	totalResponseUs     int64
 }
 
 // NewEmailService creates a new instance of EmailService without Redis cache
@@ -82,7 +83,11 @@ func NewEmailServiceWithDeps(validator interface{}) *EmailService {
 
 // ValidateEmail performs all validation checks on a single email
 func (s *EmailService) ValidateEmail(email string) model.EmailValidationResponse {
+	start := time.Now()
 	atomic.AddInt64(&s.requests, 1)
+	defer func() {
+		atomic.AddInt64(&s.totalResponseUs, time.Since(start).Microseconds())
+	}()
 
 	response := model.EmailValidationResponse{
 		Email:       email,
@@ -171,7 +176,11 @@ func (s *EmailService) ValidateEmail(email string) model.EmailValidationResponse
 
 // ValidateEmails performs validation on multiple email addresses concurrently
 func (s *EmailService) ValidateEmails(emails []string) model.BatchValidationResponse {
+	start := time.Now()
 	atomic.AddInt64(&s.requests, 1)
+	defer func() {
+		atomic.AddInt64(&s.totalResponseUs, time.Since(start).Microseconds())
+	}()
 	return s.batchValidationSvc.ValidateEmails(emails)
 }
 
@@ -201,8 +210,17 @@ func (s *EmailService) GetAPIStatus() model.APIStatus {
 		Status:            "healthy",
 		Uptime:            uptime.String(),
 		RequestsHandled:   atomic.LoadInt64(&s.requests),
-		AvgResponseTimeMs: 25.0, // This should be calculated based on actual metrics
+		AvgResponseTimeMs: s.averageResponseTimeMs(),
 	}
+}
+
+func (s *EmailService) averageResponseTimeMs() float64 {
+	requests := atomic.LoadInt64(&s.requests)
+	if requests == 0 {
+		return 0
+	}
+	totalUs := atomic.LoadInt64(&s.totalResponseUs)
+	return float64(totalUs) / float64(requests) / 1000.0
 }
 
 // SetDomainValidationService sets the domain validation service (for testing)

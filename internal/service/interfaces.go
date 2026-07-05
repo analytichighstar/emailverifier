@@ -15,6 +15,7 @@ type EmailValidator interface {
 // DomainValidator defines the contract for domain-specific validations
 type DomainValidator interface {
 	ValidateDomain(domain string) bool
+	ValidateDomainRecords(domain string) (exists bool, hasMX bool)
 	ValidateMXRecords(domain string) bool
 	IsDisposable(domain string) bool
 }
