@@ -34,6 +34,7 @@ func TestBatchValidationService_ValidateEmails(t *testing.T) {
 			setup: func(rv *mocks.MockEmailRuleValidator, dv *mocks.MockDomainValidationService, mc *mocks.MockMetricsCollector) {
 				rv.On("ValidateSyntax", "test@example.com").Return(true)
 				rv.On("IsRoleBased", "test@example.com").Return(false)
+				rv.On("DetectAlias", "test@example.com").Return("")
 				dv.On("ValidateDomainConcurrently", mock.Anything, "example.com").Return(true, true, false)
 				rv.On("CalculateScore", mock.Anything).Return(95)
 			},
@@ -61,6 +62,7 @@ func TestBatchValidationService_ValidateEmails(t *testing.T) {
 			setup: func(rv *mocks.MockEmailRuleValidator, dv *mocks.MockDomainValidationService, mc *mocks.MockMetricsCollector) {
 				rv.On("ValidateSyntax", "test@gmial.com").Return(true)
 				rv.On("IsRoleBased", "test@gmial.com").Return(false)
+				rv.On("DetectAlias", "test@gmial.com").Return("")
 				dv.On("ValidateDomainConcurrently", mock.Anything, "gmial.com").Return(true, true, false)
 				rv.On("CalculateScore", mock.Anything).Return(95)
 			},
@@ -88,8 +90,10 @@ func TestBatchValidationService_ValidateEmails(t *testing.T) {
 			setup: func(rv *mocks.MockEmailRuleValidator, dv *mocks.MockDomainValidationService, mc *mocks.MockMetricsCollector) {
 				rv.On("ValidateSyntax", "test1@example.com").Return(true)
 				rv.On("IsRoleBased", "test1@example.com").Return(false)
+				rv.On("DetectAlias", "test1@example.com").Return("")
 				rv.On("ValidateSyntax", "test2@example.com").Return(true)
 				rv.On("IsRoleBased", "test2@example.com").Return(false)
+				rv.On("DetectAlias", "test2@example.com").Return("")
 				dv.On("ValidateDomainConcurrently", mock.Anything, "example.com").Return(true, true, false)
 				rv.On("CalculateScore", mock.Anything).Return(95).Times(2)
 			},
