@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: email-verifier
+    name: eriwaspecials
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
