@@ -92,10 +92,10 @@ func main() {
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           finalMux,
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      180 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	if err := srv.ListenAndServe(); err != nil {

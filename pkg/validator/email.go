@@ -29,7 +29,7 @@ func NewEmailValidatorWithCache(redisCache cache.Cache) (*EmailValidator, error)
 	} else {
 		cacheManager = NewDomainCacheManager(time.Hour)
 	}
-	resolver := &DefaultResolver{timeout: 2 * time.Second}
+	resolver := &DefaultResolver{timeout: 1500 * time.Millisecond}
 
 	disposableValidator, err := NewDisposableValidator()
 	if err != nil {

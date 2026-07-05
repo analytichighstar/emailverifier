@@ -10,6 +10,8 @@ import (
 	"emailvalidator/internal/utils"
 )
 
+const maxConcurrentDomainLookups = 25
+
 // BatchValidationService handles batch email validation operations
 type BatchValidationService struct {
 	emailRuleValidator   EmailRuleValidator
@@ -38,16 +40,9 @@ func (s *BatchValidationService) ValidateEmails(emails []string) model.BatchVali
 		return model.BatchValidationResponse{Results: []model.EmailValidationResponse{}}
 	}
 
-	// Group emails by domain
 	emailsByDomain := s.groupEmailsByDomain(emails)
-
-	// Process domain validations
 	domainResults := s.processDomainValidations(emailsByDomain)
-
-	// Process individual emails
-	response := s.processEmails(emails, emailsByDomain, domainResults)
-
-	return response
+	return s.processEmails(emails, domainResults)
 }
 
 func (s *BatchValidationService) groupEmailsByDomain(emails []string) map[string][]string {
@@ -78,115 +73,66 @@ func (s *BatchValidationService) processDomainValidations(emailsByDomain map[str
 		DomainExists bool
 		MXRecords    bool
 		IsDisposable bool
-	})
-
-	var wg sync.WaitGroup
-	resultChan := make(chan struct {
-		domain       string
-		domainExists bool
-		hasMX        bool
-		isDisposable bool
 	}, len(emailsByDomain))
 
-	// Process domains concurrently
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentDomainLookups)
+	var mu sync.Mutex
+
 	for domain := range emailsByDomain {
 		wg.Add(1)
 		go func(d string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
 			exists, hasMX, isDisposable := s.domainValidationSvc.ValidateDomainConcurrently(ctx, d)
-			resultChan <- struct {
-				domain       string
-				domainExists bool
-				hasMX        bool
-				isDisposable bool
-			}{d, exists, hasMX, isDisposable}
+
+			mu.Lock()
+			domainResults[d] = struct {
+				DomainExists bool
+				MXRecords    bool
+				IsDisposable bool
+			}{exists, hasMX, isDisposable}
+			mu.Unlock()
 		}(domain)
 	}
 
-	// Close results channel after all goroutines complete
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Collect domain validation results
-	for result := range resultChan {
-		domainResults[result.domain] = struct {
-			DomainExists bool
-			MXRecords    bool
-			IsDisposable bool
-		}{result.domainExists, result.hasMX, result.isDisposable}
-	}
-
+	wg.Wait()
 	return domainResults
 }
 
 func (s *BatchValidationService) processEmails(
 	emails []string,
-	emailsByDomain map[string][]string,
 	domainResults map[string]struct {
 		DomainExists bool
 		MXRecords    bool
 		IsDisposable bool
 	},
 ) model.BatchValidationResponse {
-	var response model.BatchValidationResponse
-	resultsMap := make(map[string]model.EmailValidationResponse)
+	results := make([]model.EmailValidationResponse, len(emails))
+	jobs := make(chan int, len(emails))
 
-	jobs := make(chan string, len(emails))
-	results := make(chan model.EmailValidationResponse, len(emails))
-
-	// Start workers
 	workerCount := utils.MinInt(len(emails), s.maxConcurrentWorkers)
 	var wg sync.WaitGroup
 	wg.Add(workerCount)
 
 	for i := 0; i < workerCount; i++ {
-		go s.emailValidationWorker(&wg, jobs, results, emailsByDomain, domainResults)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				results[index] = s.validateSingleEmail(emails[index], domainResults)
+			}
+		}()
 	}
 
-	// Send jobs
-	for _, email := range emails {
-		jobs <- email
+	for i := range emails {
+		jobs <- i
 	}
 	close(jobs)
+	wg.Wait()
 
-	// Wait for completion and close results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	for result := range results {
-		resultsMap[result.Email] = result
-	}
-
-	// Preserve original order
-	for _, email := range emails {
-		response.Results = append(response.Results, resultsMap[email])
-	}
-
-	return response
-}
-
-func (s *BatchValidationService) emailValidationWorker(
-	wg *sync.WaitGroup,
-	jobs <-chan string,
-	results chan<- model.EmailValidationResponse,
-	emailsByDomain map[string][]string,
-	domainResults map[string]struct {
-		DomainExists bool
-		MXRecords    bool
-		IsDisposable bool
-	},
-) {
-	defer wg.Done()
-
-	for email := range jobs {
-		response := s.validateSingleEmail(email, domainResults)
-		results <- response
-	}
+	return model.BatchValidationResponse{Results: results}
 }
 
 func (s *BatchValidationService) validateSingleEmail(
@@ -220,7 +166,6 @@ func (s *BatchValidationService) validateSingleEmail(
 		return response
 	}
 
-	// Get domain validation results
 	domainValidation := domainResults[domain]
 	response.Validations.DomainExists = domainValidation.DomainExists
 	response.Validations.MXRecords = domainValidation.MXRecords
@@ -228,18 +173,10 @@ func (s *BatchValidationService) validateSingleEmail(
 	response.Validations.IsRoleBased = s.emailRuleValidator.IsRoleBased(email)
 	response.Validations.MailboxExists = response.Validations.MXRecords
 
-	// Always check for typo suggestions
-	suggestions := s.emailRuleValidator.GetTypoSuggestions(email)
-	if len(suggestions) > 0 {
-		response.TypoSuggestion = suggestions[0]
-	}
-
-	// Detect if email is an alias
 	if canonicalEmail := s.emailRuleValidator.DetectAlias(email); canonicalEmail != "" && canonicalEmail != email {
 		response.AliasOf = canonicalEmail
 	}
 
-	// Calculate score
 	validationMap := map[string]bool{
 		"syntax":         response.Validations.Syntax,
 		"domain_exists":  response.Validations.DomainExists,
@@ -249,16 +186,6 @@ func (s *BatchValidationService) validateSingleEmail(
 		"is_role_based":  response.Validations.IsRoleBased,
 	}
 	response.Score = s.emailRuleValidator.CalculateScore(validationMap)
-
-	// Reduce score if there's a typo suggestion
-	if response.TypoSuggestion != "" {
-		response.Score = max(0, response.Score-20) // Ensure score doesn't go below 0
-	}
-
-	// Record validation score
-	s.metricsCollector.RecordValidationScore("overall", float64(response.Score))
-
-	// Set status
 	response.Status = s.determineValidationStatus(&response)
 
 	return response
@@ -269,7 +196,7 @@ func (s *BatchValidationService) determineValidationStatus(response *model.Email
 	case !response.Validations.DomainExists:
 		return model.ValidationStatusInvalidDomain
 	case !response.Validations.MXRecords:
-		response.Score = 40 // Override score for no MX records case
+		response.Score = 40
 		return model.ValidationStatusNoMXRecords
 	case response.Validations.IsDisposable:
 		return model.ValidationStatusDisposable

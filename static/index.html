@@ -215,6 +215,37 @@
       letter-spacing: 0.08em;
     }
 
+    .progress-wrap {
+      margin-top: 12px;
+      display: none;
+    }
+
+    .progress-wrap.active {
+      display: block;
+    }
+
+    .progress-bar {
+      height: 8px;
+      border: 1px solid rgba(0,255,102,0.2);
+      background: rgba(0,255,102,0.05);
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.2s ease;
+      box-shadow: 0 0 10px rgba(0,255,102,0.4);
+    }
+
+    .progress-label {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+    }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(3, minmax(0,1fr));
@@ -351,7 +382,12 @@
           </label>
 
           <input id="file-input" class="file-input" type="file" accept=".txt,text/plain" />
-          <p id="upload-hint" class="upload-hint">Supports .txt files with one email per line (commas and semicolons also work).</p>
+          <p id="upload-hint" class="upload-hint">Supports .txt files with one email per line. Large lists are scanned in batches automatically.</p>
+
+          <div id="progress-wrap" class="progress-wrap">
+            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+            <div id="progress-label" class="progress-label">Preparing scan...</div>
+          </div>
 
           <div class="control-row">
             <button id="upload-file" class="btn secondary" type="button">Upload .txt</button>
@@ -400,6 +436,9 @@
     const downloadVerifiedButton = document.getElementById('download-verified');
     const downloadAllButton = document.getElementById('download-all');
     const uploadHint = document.getElementById('upload-hint');
+    const progressWrap = document.getElementById('progress-wrap');
+    const progressFill = document.getElementById('progress-fill');
+    const progressLabel = document.getElementById('progress-label');
     const consoleOutput = document.getElementById('console-output');
     const resultsList = document.getElementById('results-list');
     const totalCount = document.getElementById('total-count');
@@ -409,6 +448,31 @@
     const serviceStatus = document.getElementById('service-status');
 
     let lastResults = [];
+    let scanAbortController = null;
+
+    const MAX_EMAILS = 10000;
+    const CHUNK_SIZE = 250;
+    const MAX_RENDERED_RESULTS = 200;
+
+    function setProgress(percent, label) {
+      progressWrap.classList.add('active');
+      progressFill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+      progressLabel.textContent = label;
+    }
+
+    function clearProgress() {
+      progressWrap.classList.remove('active');
+      progressFill.style.width = '0%';
+      progressLabel.textContent = '';
+    }
+
+    function chunkArray(items, size) {
+      const chunks = [];
+      for (let i = 0; i < items.length; i += size) {
+        chunks.push(items.slice(i, i + size));
+      }
+      return chunks;
+    }
 
     function logLine(message) {
       consoleOutput.textContent += `\n${message}`;
@@ -486,7 +550,11 @@
         return;
       }
 
-      resultsList.innerHTML = results.map((result) => `
+      const displayResults = results.length > MAX_RENDERED_RESULTS
+        ? results.slice(0, MAX_RENDERED_RESULTS)
+        : results;
+
+      const cards = displayResults.map((result) => `
         <article class="result-card ${statusClass(result)}">
           <div class="result-meta">
             <div class="result-email">${escapeHtml(result.email)}</div>
@@ -495,6 +563,12 @@
           <div class="result-score">score: ${escapeHtml(result.score ?? '')}</div>
         </article>
       `).join('');
+
+      const overflow = results.length > MAX_RENDERED_RESULTS
+        ? `<div class="empty-state">Showing first ${MAX_RENDERED_RESULTS} of ${results.length} results. Download verified list for the full export.</div>`
+        : '';
+
+      resultsList.innerHTML = cards + overflow;
     }
 
     function mergeEmailsIntoInput(emails) {
@@ -535,15 +609,32 @@
       reader.readAsText(file);
     }
 
-    function updateCounters(results) {
-      const total = results.length;
+    function updateCounters(results, totalQueued) {
+      const total = totalQueued ?? results.length;
       const valid = results.filter(isVerified).length;
-      const invalid = total - valid;
-      totalCount.textContent = total;
+      const invalid = results.length - valid;
+      totalCount.textContent = results.length;
       validCount.textContent = valid;
       invalidCount.textContent = invalid;
-      resultsSummary.textContent = `${results.length} / ${results.length} scanned`;
+      resultsSummary.textContent = `${results.length} / ${total} scanned`;
       updateDownloadButtons(results);
+    }
+
+    async function validateChunk(emails, signal) {
+      const response = await fetch('/api/validate/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emails }),
+        signal
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.error || `Server error (${response.status})`);
+      }
+
+      const data = await response.json();
+      return Array.isArray(data.results) ? data.results : [];
     }
 
     async function runScan() {
@@ -553,39 +644,86 @@
         return;
       }
 
-      if (emails.length > 100) {
-        logLine(`> queue too large :: maximum 100 emails per scan (${emails.length} provided)`);
-        uploadHint.textContent = 'Maximum 100 emails per scan. Remove extras and try again.';
+      if (emails.length > MAX_EMAILS) {
+        logLine(`> queue too large :: maximum ${MAX_EMAILS} emails (${emails.length} provided)`);
+        uploadHint.textContent = `Maximum ${MAX_EMAILS} emails per run. Split your file and try again.`;
         return;
       }
 
+      if (scanAbortController) {
+        scanAbortController.abort();
+      }
+      scanAbortController = new AbortController();
+      const signal = scanAbortController.signal;
+
       runScanButton.disabled = true;
+      clearButton.disabled = true;
       downloadVerifiedButton.disabled = true;
       downloadAllButton.disabled = true;
-      logLine(`> launching sweep against ${emails.length} targets...`);
+
+      const chunks = chunkArray(emails, CHUNK_SIZE);
+      const allResults = [];
+      let processed = 0;
+
+      logLine(`> launching sweep against ${emails.length} targets in ${chunks.length} batch(es)...`);
       resultsList.innerHTML = '<div class="empty-state">Scanning...</div>';
+      setProgress(0, `Starting scan (0 / ${emails.length})`);
 
       try {
-        const response = await fetch('/api/validate/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ emails })
-        });
+        for (let i = 0; i < chunks.length; i++) {
+          if (signal.aborted) break;
 
-        const data = await response.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        lastResults = results;
-        renderResults(results);
-        updateCounters(results);
-        const verified = results.filter(isVerified).length;
-        logLine(`> scan complete :: ${results.length} records parsed :: ${verified} verified`);
+          const chunk = chunks[i];
+          setProgress(
+            Math.round((processed / emails.length) * 100),
+            `Scanning batch ${i + 1} of ${chunks.length} (${processed} / ${emails.length})`
+          );
+
+          const chunkResults = await validateChunk(chunk, signal);
+          allResults.push(...chunkResults);
+          processed += chunk.length;
+
+          lastResults = allResults.slice();
+          renderResults(lastResults);
+          updateCounters(lastResults, emails.length);
+
+          setProgress(
+            Math.round((processed / emails.length) * 100),
+            `Completed batch ${i + 1} of ${chunks.length} (${processed} / ${emails.length})`
+          );
+
+          // Yield to the browser so the UI stays responsive
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        if (signal.aborted) {
+          logLine('> scan cancelled');
+          return;
+        }
+
+        const verified = allResults.filter(isVerified).length;
+        setProgress(100, `Scan complete (${allResults.length} / ${emails.length})`);
+        logLine(`> scan complete :: ${allResults.length} records parsed :: ${verified} verified`);
+        uploadHint.textContent = `Last scan: ${allResults.length} emails processed in ${chunks.length} batch(es).`;
       } catch (error) {
-        lastResults = [];
+        if (error.name === 'AbortError') {
+          logLine('> scan cancelled');
+          return;
+        }
+        lastResults = allResults;
         logLine(`> transmission failed :: ${error.message}`);
-        resultsList.innerHTML = '<div class="empty-state">Scan failed. Check the backend service.</div>';
-        updateDownloadButtons([]);
+        if (allResults.length) {
+          renderResults(allResults);
+          updateCounters(allResults);
+        } else {
+          resultsList.innerHTML = '<div class="empty-state">Scan failed. Check the backend service.</div>';
+          updateDownloadButtons([]);
+        }
       } finally {
         runScanButton.disabled = false;
+        clearButton.disabled = false;
+        scanAbortController = null;
+        setTimeout(clearProgress, 1500);
       }
     }
 
@@ -618,6 +756,10 @@
 
     runScanButton.addEventListener('click', runScan);
     clearButton.addEventListener('click', () => {
+      if (scanAbortController) {
+        scanAbortController.abort();
+        scanAbortController = null;
+      }
       emailInput.value = '';
       lastResults = [];
       fileInput.value = '';
@@ -626,7 +768,8 @@
       validCount.textContent = '0';
       invalidCount.textContent = '0';
       resultsSummary.textContent = '0 / 0 scanned';
-      uploadHint.textContent = 'Supports .txt files with one email per line (commas and semicolons also work).';
+      uploadHint.textContent = 'Supports .txt files with one email per line. Large lists are scanned in batches automatically.';
+      clearProgress();
       updateDownloadButtons([]);
       logLine('> queue cleared');
     });

@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-const maxBatchEmails = 100
+const maxBatchEmails = 500
 
 var (
 	// concurrentBatchRequests tracks the number of batch requests being processed concurrently
